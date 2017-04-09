@@ -1,6 +1,6 @@
 #Improved efficacy of an arthropod toxin expressing fungus against
 #insecticide-resistant malaria-vector mosquitoes
-#16 November 2016
+#8 April 2017
 #Brian Lovett
 #Department of Entomology
 #University of Maryland
@@ -22,8 +22,17 @@ Txdat <- read.csv("Dual Toxin.csv", header=TRUE)
 #Toxin arsenal data
 TxArdat <- read.csv("Toxin Arsenal.csv", header=TRUE)
 
-#Spore dose data
+#Mosquito cloth spore dose data
 Sdat <- read.csv("Spore Counts.csv", header=TRUE)
+
+#Mosquito cloth spore dose data
+Sp.dat <- read.csv("Lab Spores.csv", header=TRUE)
+
+#Bee spore dose data
+BSp <- read.csv("Bee Spores.csv", header=TRUE)
+
+#Bee mortality data
+Bees <-read.csv("Bee Mortality.csv", header=TRUE)
 
 #Load packages
 #install.packages(c("reshape","plyr","ggplot2", "scales", "MASS")) #uncomment to load packages
@@ -32,6 +41,7 @@ library(plyr)
 library(ggplot2)
 library(scales)
 library(MASS)
+library(survival)
 
 ####Mortality Analysis####
 
@@ -206,10 +216,7 @@ t.plt2
 
 ####PCR Analysis####
 #Reformat PCR dataset
-PCRdat=PCRdat[2:5]
-colnames(PCRdat)=c("Collection site", "Species", "Resistance", "PCR Status")
-PCRdat[is.na(PCRdat$Resistance),]$`PCR Status`="need to check pcr of resistance"
-PCRdat=PCRdat[grep("ok", PCRdat$'PCR Status'),]
+colnames(PCRdat)=c("Collection site", "Species", "Resistance")
 PCRdat=subset(PCRdat, Species!="A")
 
 #Find n for each species
@@ -285,52 +292,6 @@ Txdat2.LC50.Error=ddply(Txdat2.LC, .(Treatment, Day), summarize, "LC50 Mean"=mea
 #Create csv with results
 #write.csv(Txdat2.LC50.Error, file = "Toxin LC50.csv")
 
-#Pull LT50 means for visualization
-point.dat=Txdat2.LT50.Error
-point.dat$Concentration=as.factor(point.dat$Concentration)
-
-#Create dataset representing Fang et. al 2011 spore count data
-Load.dat=data.frame(Concentration=as.factor(c(7,6,5)),value=c(10000000, 1000000,100000), Spores=c(201,41, 4))
-
-#Represent control data in each concentration
-point.dat.c=data.frame(Treatment=rep("Untreated", 3), Concentration=c(5:7))
-point.dat.c=merge(point.dat.c, point.dat[c(1,3:5)])
-
-#Add control treatements for each concentration to original dataset
-point.dat=rbind(subset(point.dat, Treatment!="Untreated"), point.dat.c)
-
-#Merge spore count data  and LC50 data to LT50 means
-point.dat=merge(point.dat, Load.dat[c(1,3)], all.x=T)
-point.dat=merge(point.dat, Txdat2.LC50.Error[c(1,3)], all.x=T)
-
-#Generate linear model to calculate inoculum based on concentration
-spore.model=glm(Spores~value, dat=Load.dat)
-
-#Estimate inoculum relative to LC50
-point.dat$Est.LC50.Spores=predict(spore.model,newdata=data.frame(value=point.dat$`LC50 Mean`), type="response")
-#Calculate dose (Inoculum/LC50)
-point.dat$dose=point.dat$Spores/point.dat$Est.LC50.Spores
-
-#Fill in zero for untreated mosquitoes
-point.dat[point.dat$Treatment=="Untreated",]$`LC50 Mean`=0
-point.dat[point.dat$Treatment=="Untreated",]$Est.LC50.Spores=0
-point.dat[point.dat$Treatment=="Untreated",]$dose=0
-
-#Reformat data for visualization
-point.dat$Spores=as.factor(point.dat$Spores)
-point.dat$Treatment <- factor(point.dat$Treatment, levels = levels(point.dat$Treatment)[c(8,4,5,6,7,1,2,3)])
-levels(point.dat$Spores)=c("~4 Spores", "41±6 Spores", "200±9 Spores")
-
-#Plot LT50s by dose
-limits=aes(ymax=`LT50 Mean`+se, ymin=`LT50 Mean`-se)
-theme = theme_bw()+theme(text = element_text(size=25), axis.title.x = element_text(size=30), axis.title.x = element_text(size=30), title = element_text(size=30))
-cbPalette <- c("#a812ce", "#ce8f12", "#54ce12", "#ce2e12", "#129cce")
-ar.plt1=ggplot(point.dat, aes(dose, `LT50 Mean`, color=Treatment))+
-  geom_point(stat="identity", position="dodge", size=5)+geom_errorbar(limits, position=position_dodge(.9), width=.2, size=2)+
-  theme+xlab("Inoculum/LC50")+scale_colour_manual(values=cbPalette)+
-  ylab("LT50 (Days)")+ggtitle("LT50 of Single, Dual Toxin Strains by Inoculum/LC50")+facet_wrap(~Spores)
-ar.plt1
-
 #Test for synergism
 #Calculate SE and mean LC50 across treatments for 5 days post infection for toxin expressing strains
 syn.tab=ddply(subset(ddply(subset(Txdat2, Treatment!="Untreated" & Day %in% c(4.5,5)),
@@ -368,7 +329,7 @@ levels(TxArdat2$variable)[1:11]=1:11
 TxArdat2.n=subset(TxArdat2, variable=="n")
 TxArdat2$variable=as.numeric(as.character(TxArdat2$variable))
 colnames(TxArdat2.n)[4]="n"
-TxArdat2=subset(TxArdat2, variable!="n")
+TxArdat2=subset(TxArdat2, !is.na(variable))
 TxArdat2=merge(TxArdat2, TxArdat2.n[c(1:2, 4)])
 colnames(TxArdat2)[3:4]=c("Day", "Dead")
 
@@ -423,19 +384,33 @@ pairwise.t.test(testdat$LT,testdat$Concentration, p.adj="none")
 #Create csv with results
 #write.csv(Master.Tx.LT50.Error, file = "Toxin Arsenal LT50s.csv")
 
-####Spore Count Analysis####
-#Reformat spore count data
+####Cloth Spore Count Analysis####
+#Reformat mosquito spore count data
 Sdat=Sdat[c(2,4,5)]
-levels(Sdat$Replicate)=1:4
+levels(Sdat$Replicate)=1:3
+
 #Calculate the mean across replicates
 Sdat2=ddply(Sdat, .(Replicate), summarize, mn=mean(spores.mosq), count=length(spores.mosq))
+
 #Calculate the mean among replicates
-Sdat3=ddply(subset(Sdat2, Replicate!=3), .(), summarize, mn.all=mean(mn), sd=sd(mn))
+Sdat3=ddply(Sdat2, .(), summarize, mn.all=mean(mn), sd=sd(mn))
+
+#Reformat bee spore count data
+colnames(BSp)[4:5]=c("Treatment", "Method")
+levels(BSp$Treatment)[2]="Hybrid"
+levels(BSp$Method)=c("Spray", "Cloth")
+
+#Calculate the mean across replicates
+BSp2=ddply(BSp, .(Treatment, Method, Replicate), summarize, mn=mean(Spores.Honey_Bees), sdev=sd(Spores.Honey_Bees), rep=length(Spores.Honey_Bees))
+
+#Test for differences between treatments for Cloth
+t.test(subset(BSp2, Treatment=="RFP" & Method=="Cloth")$mn, subset(BSp2, Treatment=="Hybrid" & Method=="Cloth")$mn)
+t.test(subset(BSp2, Method=="Cloth")$mn, Sdat2$mn)
+
+#Calculate the mean among replicates
+BSp3=ddply(BSp, .(Method), summarize, mn=mean(Spores.Honey_Bees), se=sd(Spores.Honey_Bees, na.rm=T)/sqrt(length(Spores.Honey_Bees[!is.na(Spores.Honey_Bees)])), rep=length(Spores.Honey_Bees))
 
 ####Log-Rank Testing####
-#install.packages("survival")
-library(survival)
-
 #Individualize dual toxin data for Log-Rank Tests  
 Txdat3=Txdat
 Txdat3$Alive=30
@@ -498,6 +473,7 @@ LogR.dat.s=subset(LogR.dat, Treatment=="AaIT"|Treatment=="Hybrid/AaIT")
 survdiff(Surv(LogR.dat.s$Day, LogR.dat.s$status)~LogR.dat.s$Treatment, subset=LogR.dat.s$Concentration==5)
 survdiff(Surv(LogR.dat.s$Day, LogR.dat.s$status)~LogR.dat.s$Treatment, subset=LogR.dat.s$Concentration==6)
 survdiff(Surv(LogR.dat.s$Day, LogR.dat.s$status)~LogR.dat.s$Treatment, subset=LogR.dat.s$Concentration==7)
+LogR.dat.WT.6=subset(LogR.dat, Treatment=="WT"&Concentration=="6")
 LogR.dat.WT.7=subset(LogR.dat, Treatment=="WT"&Concentration=="7")
 LogR.dat.AaIT.6=subset(LogR.dat, Treatment=="AaIT"&Concentration=="6")
 LogR.dat.AaIT.7=subset(LogR.dat, Treatment=="AaIT"&Concentration=="7")
@@ -505,6 +481,8 @@ LogR.dat.Hybrid.6=subset(LogR.dat, Treatment=="Hybrid"&Concentration=="6")
 LogR.dat.Hybrid.7=subset(LogR.dat, Treatment=="Hybrid"&Concentration=="7")
 LogR.dat.HT.AaIT.6=subset(LogR.dat, Treatment=="Hybrid/AaIT"&Concentration=="6")
 LogR.dat.HT.AaIT.7=subset(LogR.dat, Treatment=="Hybrid/AaIT"&Concentration=="7")
+LogR.dat.s=rbind(LogR.dat.WT.6, LogR.dat.WT.7)
+survdiff(Surv(LogR.dat.s$Day, LogR.dat.s$status)~LogR.dat.s$Treatment+LogR.dat.s$Concentration)
 LogR.dat.s=rbind(LogR.dat.WT.7, LogR.dat.AaIT.6)
 survdiff(Surv(LogR.dat.s$Day, LogR.dat.s$status)~LogR.dat.s$Treatment+LogR.dat.s$Concentration)
 LogR.dat.s=rbind(LogR.dat.WT.7, LogR.dat.Hybrid.6)
@@ -606,3 +584,141 @@ LogR.dat.s=rbind(LogR.dat.AaIT.7, LogR.dat2.RFP)
 survdiff(Surv(LogR.dat.s$Day, LogR.dat.s$status)~LogR.dat.s$Treatment+LogR.dat.s$Concentration)
 LogR.dat.s=rbind(LogR.dat.Hybrid.6, LogR.dat2.RFP)
 survdiff(Surv(LogR.dat.s$Day, LogR.dat.s$status)~LogR.dat.s$Treatment+LogR.dat.s$Concentration)
+
+####Spray Spore Count Analysis####
+#Reformat mosquito spray spore data
+Sp.dat$Concentration=as.factor(Sp.dat$Concentration)
+Sp.dat=Sp.dat[order(Sp.dat[,1],-Sp.dat[,3]),]
+#Rank spore counts
+Sp.dat$Rank=(1:20)/20
+
+#Rank mosquitoes by time of death
+dead=subset(LogR.dat, Treatment!="Untreated")
+dead$Concentration=as.factor(dead$Concentration)
+levels(dead$Concentration)=c("5", "6", "7")
+dead$Day=as.factor(as.numeric(dead$Day))
+dead$Replicate=as.factor(as.numeric(dead$Replicate))
+dead=dead[order(dead[,1],dead[,2],dead[,3]),]
+dead$Rank=(1:30)/30
+#Calculate mean chance of death across replicates based on rank and treatment
+dead2=ddply(dead, .(Treatment, Concentration, Rank), summarize, mn=mean(status))
+
+#Determine chance of death for spore count data by rank and treatment
+dat.s=rbind(Sp.dat[1:2],Sp.dat[1:2],Sp.dat[1:2],Sp.dat[1:2])
+dat.s$Treatment=rep(c("AaIT", "Hybrid", "Hybrid/AaIT", "WT"), each=60)
+colnames(dat.s)[2]="Rank"
+dat.s$Rank=dat.s$Rank/20
+dat.s$Concentration=as.factor(dat.s$Concentration)
+
+#Create model for chance of death
+glm=glm(mn~Rank+Concentration+Treatment, data=dead2)
+chances=ddply(dat.s, .(Treatment, Concentration, Rank), transform, prob=predict(glm, newdata=data.frame(Treatment, Concentration, Rank), type="response")) 
+
+#Add chance of death to spore count data by rank and treatment
+SpC2=merge(Sp.dat, chances)
+SpC2[SpC2$prob<0,]$prob=0
+
+#Reformat data for plotting and calculate ID100
+SpC2$Concentration=as.factor(SpC2$Concentration)
+SpC2$Treatment=as.factor(SpC2$Treatment)
+SpC2$prob=SpC2$prob*100
+SpC2$Treatment = factor(SpC2$Treatment, levels = levels(SpC2$Treatment)[c(4,1,2,3)])
+SpC3=ddply(subset(SpC2, dat2$prob<100), .(Treatment), summarize, min.lethal.dose=max(Colonies)+1)
+colnames(SpC2)[c(1,4,6)]=c("Spray Concentration", "Spores Delivered", "Chance of\nDeath\n")
+SpC4=ddply(subset(SpC2, `Spores Delivered`==0 & Treatment=="WT"), .(`Spray Concentration`), summarize, zero.sp=length(`Spores Delivered`))
+levels(SpC2$`Spray Concentration`)=as.factor(as.character(c(100000,1000000,10000000)))
+
+#Spore dose by treatment including chance of death
+Sp.plt1=ggplot(SpC2, aes(`Spray Concentration`, `Spores Delivered`, color=`Chance of\nDeath\n`))+geom_point(position=position_jitter(height = 0, width=0.25), size=5)+
+  stat_summary(fun.y = mean, fun.ymin = mean, fun.ymax = mean,
+               geom = "crossbar", width = 0.5, size=1, color="blue")+
+  scale_color_gradient(low="dark green", high="orange", na.value="red", limits=c(0,100))+
+  scale_y_continuous(breaks=0:max(SpC2$`Spores Delivered`), minor_breaks=NULL)+facet_grid(~Treatment)+
+  geom_hline(data=dat3, aes(yintercept=min.lethal.dose), size=2, color="pink", linetype="dashed")+theme
+Sp.plt1
+
+#Create dataset representing spray spore count data
+Load.dat=data.frame(Concentration=as.factor(c(5,6,7)),value=c(100000, 1000000,10000000), Spores=ddply(SpC2, .(`Spray Concentration`), summarize, mn=mean(`Spores Delivered`))$mn)
+point.dat=Txdat2.LT50.Error
+point.dat$Concentration=as.factor(point.dat$Concentration)
+
+#Represent control data in each concentration
+point.dat.c=data.frame(Treatment=rep("Untreated", 3), Concentration=c(5:7))
+point.dat.c=merge(point.dat.c, point.dat[c(1,3:5)])
+
+#Add control treatements for each concentration to original dataset
+point.dat=rbind(subset(point.dat, Treatment!="Untreated"), point.dat.c)
+
+#Merge spore count data  and LC50 data to LT50 means
+point.dat=merge(point.dat, Load.dat[c(1,3)], all.x=T)
+point.dat=merge(point.dat, Txdat2.LC50.Error[c(1,3)], all.x=T)
+
+#Generate linear model to calculate inoculum based on concentration
+spore.model=glm(Spores~value, dat=Load.dat)
+
+#Estimate inoculum relative to LC50
+point.dat$Est.LC50.Spores=predict(spore.model,newdata=data.frame(value=point.dat$`LC50 Mean`), type="response")
+#Calculate dose (Inoculum/LC50)
+point.dat$dose=point.dat$Spores/point.dat$Est.LC50.Spores
+
+#Fill in zero for untreated mosquitoes
+point.dat[point.dat$Treatment=="Untreated",]$`LC50 Mean`=0
+point.dat[point.dat$Treatment=="Untreated",]$Est.LC50.Spores=0
+point.dat[point.dat$Treatment=="Untreated",]$dose=0
+
+#Reformat data for visualization
+point.dat$Spores=as.factor(point.dat$Spores)
+point.dat$Treatment <- factor(point.dat$Treatment, levels = levels(point.dat$Treatment)[c(8,4,5,6,7,1,2,3)])
+levels(point.dat$Spores)=c("~1 Spore", "~3 Spores", "~6 Spores")
+
+#Plot LT50s by dose
+limits=aes(ymax=`LT50 Mean`+se, ymin=`LT50 Mean`-se)
+theme = theme_bw()+theme(text = element_text(size=25), axis.title.x = element_text(size=30), axis.title.y = element_text(size=30), title = element_text(size=30))
+cbPalette <- c("#129cce", "#a812ce", "#ce8f12", "#54ce12", "#ce2e12")
+ar.plt1=ggplot(point.dat, aes(dose, `LT50 Mean`, color=Treatment))+
+  geom_point(stat="identity", position="dodge", size=5)+geom_errorbar(limits, width=.2, size=2)+
+  theme+xlab("Inoculum/LC50")+scale_colour_manual(values=cbPalette)+
+  ylab("LT50 (Days)")+ggtitle("LT50 of Single, Dual Toxin Strains by Inoculum/LC50")+facet_wrap(~Spores)
+ar.plt1
+
+####Bee Mortality Analysis####
+#Reformat bee mortality data
+levels(Bees$Replicate)=1:4
+Bees2=melt(Bees, colnames(Bees)[c(1,8:9)], colnames(Bees)[2:7])
+colnames(Bees2)[3:5]=c("Method", "Treatment", "Dead")
+
+#Calculate percent mortality
+Bees3=ddply(Bees2, .(Replicate, Treatment, Method), transform, Percent=1-cumsum(Dead)/sum(Dead), n=sum(Dead))
+Bees4=subset(Bees3, Days!="Alives")
+Bees4$Days=as.numeric(as.character(Bees4$Days))
+Bees5=ddply(Bees4, .(Days, Treatment, Method), summarize, mean=mean(Percent), se=sd(Percent)/sqrt(length(Percent)))
+
+#Plot bee mortality data
+limits=aes(ymax=mean+se, ymin=mean-se)
+theme = theme_bw()+theme(text = element_text(size=20), axis.title.x = element_text(size=30), axis.text.x = element_text(angle=90, hjust=1, vjust=.5, size=20), axis.text.y = element_text(size=25), title = element_text(size=35), legend.title = element_text(size=25), legend.text = element_text(size=20))
+library(scales)
+cbPalette <- c("#007acc", "#007acc", "#cc0000", "#cc0000", "#29a329", "#29a329")
+B.plt1=ggplot(Bees5, aes(Days, mean, color=Treatment))+geom_line(size=3)+
+  theme+geom_errorbar(limits, size=2)+scale_colour_manual(values=cbPalette)+
+  xlab("Days after exposure")+ylab("Percent survival")+ggtitle("Survival following exposure to fungus")+
+  scale_y_continuous(labels=percent, limits=c(0,1))+scale_x_continuous(breaks=0:max(Bees5$Days))+facet_wrap(~Method)
+B.plt1
+
+#Log-rank testing for bee mortality
+Treatment=as.vector(rep(Bees3$Treatment, Bees3$Dead))
+Replicate=as.vector(rep(Bees3$Replicate, Bees3$Dead))
+Method=as.vector(rep(Bees3$Method, Bees3$Dead))
+Day=as.vector(rep(Bees3$Days, Bees3$Dead))
+LogR.dat3=data.frame(Treatment, Replicate, Method, Day)
+LogR.dat3$status=0
+LogR.dat3[Day!="Alives",]$status=1
+levels(LogR.dat3$Day)[13]="14"
+LogR.dat3$Day=as.numeric(as.character(LogR.dat3$Day))
+LogR.dat.Spray=subset(LogR.dat3, Method=="Spray")
+LogR.dat.Cloth=subset(LogR.dat3, Method=="Cloth")
+survdiff(Surv(LogR.dat.Spray$Day, LogR.dat.Spray$status)~LogR.dat.Spray$Treatment, subset=LogR.dat.Spray$Treatment=="Control"|LogR.dat.Spray$Treatment=="RFP")
+survdiff(Surv(LogR.dat.Spray$Day, LogR.dat.Spray$status)~LogR.dat.Spray$Treatment, subset=LogR.dat.Spray$Treatment=="Control"|LogR.dat.Spray$Treatment=="Hybrid")
+survdiff(Surv(LogR.dat.Spray$Day, LogR.dat.Spray$status)~LogR.dat.Spray$Treatment, subset=LogR.dat.Spray$Treatment=="Hybrid"|LogR.dat.Spray$Treatment=="RFP")
+survdiff(Surv(LogR.dat.Cloth$Day, LogR.dat.Cloth$status)~LogR.dat.Cloth$Treatment, subset=LogR.dat.Cloth$Treatment=="Control"|LogR.dat.Cloth$Treatment=="RFP")
+survdiff(Surv(LogR.dat.Cloth$Day, LogR.dat.Cloth$status)~LogR.dat.Cloth$Treatment, subset=LogR.dat.Cloth$Treatment=="Control"|LogR.dat.Cloth$Treatment=="Hybrid")
+survdiff(Surv(LogR.dat.Cloth$Day, LogR.dat.Cloth$status)~LogR.dat.Cloth$Treatment, subset=LogR.dat.Cloth$Treatment=="Hybrid"|LogR.dat.Cloth$Treatment=="RFP")
