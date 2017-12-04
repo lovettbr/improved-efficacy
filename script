@@ -103,7 +103,7 @@ surv.per=0.20
 LTdat2=ddply(LTdat,.(Species, Treatment, Replicate), summarize,
              LT=as.numeric(dose.p(glm(cbind(Alive,Dead)~Day,binomial),p=surv.per)))
 LTdat2[LTdat2$LT<0,]$LT=NA
-LT80.Error=ddply(LTdat2, .(Treatment, Species), summarize, "LT50 Mean"=mean(LT,na.rm=T), se=sd(LT, na.rm=T)/sqrt(length(LT[!is.na(LT)])), Replicates=length(LT[!is.na(LT)]))
+LT80.Error=ddply(LTdat2, .(Treatment, Species), summarize, "LT80 Mean"=mean(LT,na.rm=T), se=sd(LT, na.rm=T)/sqrt(length(LT[!is.na(LT)])), Replicates=length(LT[!is.na(LT)]))
 
 #Plot survival data
 limits=aes(ymax=mean+se, ymin=mean-se)
